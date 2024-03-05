@@ -1,54 +1,65 @@
 import puppeteer from 'puppeteer';
+import fs from 'fs';
 
 (async () => {
   const browser = await puppeteer.launch({
     defaultViewport: null,
     devtools: true,
     headless: false,
-    slowMo: 250, // fpr slowing the puppeteer pace
+    slowMo: 250,
   });
 
   const page = await browser.newPage();
-  
-  await page.goto('https://uk.webuy.com/product-detail?id=sappi14pr128gsbunlb&categoryName=phones-iphone&superCatName=phones&title=apple-iphone-14-pro-128gb-space-black-unlocked-b&queryID=094880363955d5956df9c6ab3f6d7fd7&position=1');
-  await page.waitForSelector('.product-detail');
-  
-  await page.waitForSelector('#onetrust-banner-sdk');
-  await page.click('#onetrust-accept-btn-handler');
+  const jsonString = fs.readFileSync('iphone-list.json');
+  const urls = JSON.parse(jsonString);
 
-  await page.evaluate(() => {
-    const productDetail = document.querySelector('.product-detail');
-    productDetail.scrollIntoView();
-  });
-  
-  const possibilities = [];
-  const sections = await page.evaluate(() => {
-    const sections = Array.from(document.querySelectorAll('.product-detail .mb-s.pb-xs.md-pb-0'));
-    return sections.map(section => {
-      const title = section.querySelector('div:first-child').textContent.trim();
-      const values = Array.from(section.querySelectorAll('.selector')).map(value => value.textContent.trim());
-      return { title, values };
+  const skus = [];
+
+  for (const urlData of urls) {
+    const url = urlData.url;
+
+    await page.goto(url);
+    try {
+      await page.waitForSelector('.product-detail', { timeout: 40000 });
+    } catch (error) {
+      console.log('Timeout exceeded while waiting for .product-detail');
+      continue;
+    }
+    
+
+    await page.evaluate(() => {
+      const productDetail = document.querySelector('.product-detail');
+      if (productDetail) {
+        productDetail.scrollIntoView();
+      } else {
+        console.log('.product-detail element not found.');
+      }
     });
-  });
-  
-  function onlyUnique(value, index, array) {
-    return array.indexOf(value) === index;
-  }
-  function getCombinations(sections, index, combination) {
-    if (index === sections.length) {
-      possibilities.push(combination.join(', '));
-      return;
+
+    const sections = await page.evaluate(() => {
+      const sections = Array.from(document.querySelectorAll('.product-detail .mb-s.pb-xs.md-pb-0'));
+      return sections.map(section => {
+        const title = section.querySelector('div:first-child').textContent.trim();
+        const values = Array.from(section.querySelectorAll('.selector')).map(value => value.textContent.trim());
+        return { title, values };
+      });
+    });
+
+    const possibilities = [];
+
+    function getCombinations(sections, index, combination) {
+      if (index === sections.length) {
+        possibilities.push(combination.join(', '));
+        return;
+      }
+      for (const value of sections[index].values) {
+        getCombinations(sections, index + 1, [...combination, value]);
+      }
     }
-    for (const value of sections[index].values) {
-      getCombinations(sections, index + 1, [...combination, value]);
-    }
-  }
-  getCombinations(sections, 0, []);
-  
-  let SKUs = [];
-  for (const possibility of possibilities) {
-    SKUs.push(
-      await page.evaluate((possibility) => {
+    getCombinations(sections, 0, []);
+
+    for (const possibility of possibilities) {
+      const sku = await page.evaluate((possibility) => {
         possibility.split(',').forEach((pos) => {
           const div = [...document.querySelectorAll(".product-detail .selector")].find(d => d.textContent.trim() == pos.trim())
           if (div) div.click();  
@@ -56,16 +67,12 @@ import puppeteer from 'puppeteer';
 
         let searchQuery = new URLSearchParams(window.location.search);
         return searchQuery.get("id");
-      }, possibility)
-    );
+      }, possibility);
+
+      skus.push(sku);
+    }
   }
 
-  SKUs = SKUs.filter(onlyUnique)
-  
-  // outcome
-  console.log(possibilities);
-  console.log(SKUs);
-  
+  fs.appendFileSync('skus.txt', skus.join('\n') + '\n');
   await browser.close();
-
 })();
