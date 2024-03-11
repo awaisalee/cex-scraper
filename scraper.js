@@ -12,8 +12,14 @@ import fs from 'fs';
   const page = await browser.newPage();
   const jsonString = fs.readFileSync('iphone-list.json');
   const urls = JSON.parse(jsonString);
+  let skus = [];
+  let _urls = [];
 
-  const skus = [];
+  page.on('framenavigated', frame => {
+    // Capture the new URL and add it to the array
+    const newURL = frame.url();
+    _urls.push(newURL);
+  });
 
   for (const urlData of urls) {
     const url = urlData.url;
@@ -25,7 +31,6 @@ import fs from 'fs';
       console.log('Timeout exceeded while waiting for .product-detail');
       continue;
     }
-    
 
     await page.evaluate(() => {
       const productDetail = document.querySelector('.product-detail');
@@ -46,7 +51,9 @@ import fs from 'fs';
     });
 
     const possibilities = [];
-
+    function onlyUnique(value, index, array) {
+      return array.indexOf(value) === index;
+    }
     function getCombinations(sections, index, combination) {
       if (index === sections.length) {
         possibilities.push(combination.join(', '));
@@ -64,15 +71,15 @@ import fs from 'fs';
           const div = [...document.querySelectorAll(".product-detail .selector")].find(d => d.textContent.trim() == pos.trim())
           if (div) div.click();  
         })
-
-        let searchQuery = new URLSearchParams(window.location.search);
-        return searchQuery.get("id");
       }, possibility);
-
-      skus.push(sku);
     }
-  }
 
+    skus = _urls.map((u) => {
+      const match = u.match(/id=([^\&]+)/)
+      return match ? match[1] : null
+    }).filter(onlyUnique)
+  }
+  
   fs.appendFileSync('skus.txt', skus.join('\n') + '\n');
   await browser.close();
 })();
